@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-export const checkPuzzleAnswerSchema = z.object({
-  id: z.string().uuid(),
-  answer: z.string().min(1),
+export const finishPuzzleSchema = z.object({
+  puzzleId: z.string().uuid(),
+  durationSec: z.number().int().positive(),
+  moveCount: z.number().int().min(0).optional().default(0),
 });
