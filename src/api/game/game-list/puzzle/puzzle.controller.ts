@@ -1,51 +1,53 @@
+import { StatusCodes } from "http-status-codes";
 import { Request, Response } from "express";
+import type { AuthedRequest } from "../../../../common/interface";
 import * as PuzzleService from "./puzzle.service";
-import { finishPuzzleSchema } from "./puzzle.schema";
+import { SuccessResponse } from "../../../../common/response";
 
-export const getPuzzleList = async (req: Request, res: Response) => {
+export const getPuzzleList = async (_: Request, res: Response) => {
   const data = await PuzzleService.getPuzzleList();
-  res.json({ success: true, data });
+  const response = new SuccessResponse(StatusCodes.OK, "Puzzle list retrieved", data);
+  res.status(response.statusCode).json(response.json());
 };
 
 export const getPuzzleById = async (req: Request, res: Response) => {
   const { id } = req.params;
-  const data = await PuzzleService.getPuzzleById(id);
-  if (!data) return res.status(404).json({ success: false, message: "Puzzle not found" });
-  res.json({ success: true, data });
+  const game = await PuzzleService.getPuzzleById(id);
+  if (!game) {
+    const response = new SuccessResponse(StatusCodes.NOT_FOUND, "Puzzle not found");
+    return res.status(response.statusCode).json(response.json());
+  }
+  const response = new SuccessResponse(StatusCodes.OK, "Puzzle retrieved", game);
+  res.status(response.statusCode).json(response.json());
 };
 
-// BARU: mulai main puzzle
-export const startPuzzle = async (req: Request, res: Response) => {
-  const userId = req.user.id;
+export const startPuzzle = async (req: AuthedRequest, res: Response) => {
+  const userId = req.user?.user_id ?? "anonymous";
   const { id } = req.params;
 
-  const result = await PuzzleService.startPuzzleSession(userId, id);
-  res.json({ success: true, data: result });
+  const result = await PuzzleService.startPuzzle(userId, id);
+  const response = new SuccessResponse(StatusCodes.CREATED, "Puzzle session started", result);
+  res.status(response.statusCode).json(response.json());
 };
 
-// BARU: selesai puzzle
-export const finishPuzzle = async (req: Request, res: Response) => {
-  const userId = req.user.id;
-  const payload = finishPuzzleSchema.parse(req.body);
-
-  const session = await PuzzleService.finishPuzzleSession({
-    userId,
-    puzzleId: payload.puzzleId,
-    durationSec: payload.durationSec,
-    moveCount: payload.moveCount,
-  });
-
-  res.json({ success: true, data: { session } });
+export const finishPuzzle = async (req: AuthedRequest, res: Response) => {
+  const userId = req.user?.user_id ?? "anonymous";
+  const payload = req.body;
+  const result = await PuzzleService.finishPuzzle(userId, payload);
+  const response = new SuccessResponse(StatusCodes.OK, "Puzzle completed successfully", result);
+  res.status(response.statusCode).json(response.json());
 };
 
-export const getHistory = async (req: Request, res: Response) => {
-  const userId = req.user.id;
-  const history = await PuzzleService.getUserHistory(userId);
-  res.json({ success: true, data: history });
-};
+export const uploadPuzzleImage = async (req: AuthedRequest, res: Response) => {
+  const userId = req.user?.user_id ?? "anonymous";
+  const file = req.file;
+  
+  if (!file) {
+    const response = new SuccessResponse(StatusCodes.BAD_REQUEST, "No file provided");
+    return res.status(response.statusCode).json(response.json());
+  }
 
-export const getLeaderboard = async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const leaderboard = await PuzzleService.getLeaderboard(id);
-  res.json({ success: true, data: leaderboard });
+  const result = await PuzzleService.uploadPuzzleImage(userId, new File([new Uint8Array(file.buffer)], file.originalname, { type: file.mimetype }));
+  const response = new SuccessResponse(StatusCodes.CREATED, "Image uploaded successfully", result);
+  res.status(response.statusCode).json(response.json());
 };
