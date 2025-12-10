@@ -1,5 +1,3 @@
 import { z } from "zod";
 
-export const startPuzzleSchema = z.object({
-  // entah
-}).strict();
+export const startPuzzleSchema = z.object({}).strict();

@@ -12,7 +12,7 @@ router.get("/", validateAuth({ optional: true }), PuzzleController.getPuzzleList
 router.get("/:id", validateAuth({ optional: true }), PuzzleController.getPuzzleById);
 router.post("/:id/start", validateAuth({ optional: true }), PuzzleController.startPuzzle);
 router.post(
-  "/:id/finish",
+  "/finish",  
   validateAuth({ optional: true }),
   validateBody({ schema: finishPuzzleSchema }),
   PuzzleController.finishPuzzle
@@ -23,5 +23,9 @@ router.post(
   upload.single("image"),
   PuzzleController.uploadPuzzleImage
 );
+router.post("/", validateAuth({ allowed_roles: ["ADMIN", "SUPER_ADMIN"] }), PuzzleController.createPuzzle);
+router.get("/:id/edit", validateAuth({ allowed_roles: ["ADMIN", "SUPER_ADMIN"] }), PuzzleController.getPuzzleForEdit);
+router.put("/:id", validateAuth({ allowed_roles: ["ADMIN", "SUPER_ADMIN"] }), PuzzleController.updatePuzzle);
+router.delete("/:id", validateAuth({ allowed_roles: ["ADMIN", "SUPER_ADMIN"] }), PuzzleController.deletePuzzle);
 
 export default router;

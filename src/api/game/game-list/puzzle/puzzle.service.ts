@@ -1,6 +1,7 @@
 import { prisma } from "../../../../common/config/prisma.config";
 import type { PuzzleGameJson } from "../../../../common/interface/games/puzzle.interface";
 import { FileManager } from "../../../../utils";
+import type { AuthedRequest } from "../../../../common/interface/request.type"; 
 
 export const getPuzzleList = async () => {
   return prisma.games.findMany({
@@ -105,4 +106,100 @@ export const uploadPuzzleImage = async (userId: string, file: File) => {
     file
   );
   return { imageUrl: imagePath };
+};
+
+
+
+export const createPuzzle = async (
+  userId: string,
+  payload: {
+    name: string;
+    description?: string;
+    imageUrl: string;
+    thumbnail?: string;
+    rows: number;
+    cols: number;
+    difficulty: "easy" | "medium" | "hard";
+    is_published?: boolean;
+  }
+) => {
+  const exists = await prisma.games.findFirst({
+    where: { name: payload.name, game_template: { slug: "puzzle" } },
+  });
+  if (exists) throw new Error("Nama puzzle sudah digunakan");
+
+  const template = await prisma.gameTemplates.findUnique({ where: { slug: "puzzle" } });
+  if (!template) throw new Error("Template puzzle tidak ditemukan");
+
+  const gameJson: PuzzleGameJson = {
+    title: payload.name,
+    description: payload.description ?? "",
+    imageUrl: payload.imageUrl,
+    thumbnail: payload.thumbnail || payload.imageUrl,
+    rows: payload.rows,
+    cols: payload.cols,
+    difficulty: payload.difficulty,
+  };
+
+  return prisma.games.create({
+    data: {
+      id: crypto.randomUUID(),
+      name: payload.name,
+      description: payload.description ?? "",
+      thumbnail_image: payload.thumbnail || payload.imageUrl,
+      game_template_id: template.id,
+      creator_id: userId,
+      is_published: payload.is_published ?? false,
+      game_json: gameJson as any,
+    },
+  });
+};
+
+export const updatePuzzle = async (
+  gameId: string,
+  payload: Partial<{
+    name: string;
+    description: string;
+    imageUrl: string;
+    thumbnail: string;
+    rows: number;
+    cols: number;
+    difficulty: "easy" | "medium" | "hard";
+    is_published: boolean;
+  }>
+) => {
+  const game = await getPuzzleById(gameId);
+  if (!game) throw new Error("Puzzle tidak ditemukan");
+
+  const updatedJson = { ...(game.game_json as unknown as PuzzleGameJson) };
+  if (payload.imageUrl !== undefined) updatedJson.imageUrl = payload.imageUrl;
+  if (payload.thumbnail !== undefined) updatedJson.thumbnail = payload.thumbnail;
+  if (payload.rows !== undefined) updatedJson.rows = payload.rows;
+  if (payload.cols !== undefined) updatedJson.cols = payload.cols;
+  if (payload.difficulty !== undefined) updatedJson.difficulty = payload.difficulty;
+
+  return prisma.games.update({
+    where: { id: gameId },
+    data: {
+      name: payload.name ?? game.name,
+      description: payload.description ?? game.description,
+      thumbnail_image: payload.thumbnail || payload.imageUrl || game.thumbnail_image,
+      is_published: payload.is_published ?? game.is_published,
+      game_json: updatedJson as any,
+    },
+  });
+};
+
+export const deletePuzzle = async (gameId: string) => {
+  const game = await getPuzzleById(gameId);
+  if (!game) throw new Error("Puzzle tidak ditemukan");
+
+  await prisma.games.delete({ where: { id: gameId } });
+  return { message: "Puzzle berhasil dihapus" };
+};
+
+export const getPuzzleForEdit = async (gameId: string) => {
+  const game = await getPuzzleById(gameId);
+  if (!game) throw new Error("Puzzle tidak ditemukan");
+  return game;
 };

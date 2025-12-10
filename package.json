@@ -70,7 +70,8 @@
     "lint-staged": "^16.2.6",
     "prettier": "^3.6.2",
     "prisma": "^6.19.0",
-    "sort-package-json": "^3.4.0"
+    "sort-package-json": "^3.4.0",
+    "ts-node-dev": "^2.0.0"
   },
   "peerDependencies": {
     "typescript": "^5.8.3"

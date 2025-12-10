@@ -4,7 +4,8 @@ export interface PuzzleGameJson {
   imageUrl: string;
   thumbnail?: string;
   rows: number;       
-  cols: number;        
+  cols: number;       
+  difficulty: "easy" | "medium" | "hard"; 
 }
 
 export interface PuzzleStartResponse {
