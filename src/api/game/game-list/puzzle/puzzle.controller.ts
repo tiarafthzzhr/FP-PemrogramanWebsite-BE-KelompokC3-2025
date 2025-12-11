@@ -1,6 +1,7 @@
 import { StatusCodes } from "http-status-codes";
 import { Request, Response } from "express";
 import type { AuthedRequest } from "../../../../common/interface";
+import { NextFunction } from "express";
 import * as PuzzleService from "./puzzle.service";
 import { SuccessResponse } from "../../../../common/response";
 import { finishPuzzleSchema } from "./schema";
@@ -54,46 +55,51 @@ export const uploadPuzzleImage = async (req: AuthedRequest, res: Response) => {
   res.status(response.statusCode).json(response.json());
 };
 
-export const getPuzzleForEdit = async (req: Request, res: Response) => {
-  const { id } = req.params;
+export const getPuzzleForEdit = async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
-    const data = await PuzzleService.getPuzzleForEdit(id);
-    res.json({ success: true, data });
+    const userId = req.user!.user_id;
+    const userRole = req.user!.role;
+    const { id } = req.params;
+
+    const game = await PuzzleService.getPuzzleForEdit(id, userId, userRole);
+    res.json({ success: true, data: game });
   } catch (error) {
-    res.status(404).json({ success: false, message: (error as Error).message });
+    next(error);
   }
 };
 
-export const createPuzzle = async (req: AuthedRequest, res: Response) => {
+export const createPuzzle = async (req: AuthedRequest, res: Response, next: NextFunction) => {
   const userId = req.user!.user_id;
-  const result = await PuzzleService.createPuzzle(userId, req.body);
-  res.status(201).json({ success: true, data: result });
+  try {
+    const result = await PuzzleService.createPuzzle(req.user!.user_id, req.body);
+    res.status(201).json({ success: true, data: result });
+  } catch (error) {
+    next(error); 
+  }
 };
 
-export const updatePuzzle = async (req: AuthedRequest, res: Response) => {
-  const userId = req.user!.user_id;
-  const userRole = req.user!.role;
-  const { id } = req.params;
+export const updatePuzzle = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.user_id;
+    const userRole = req.user!.role;
+    const { id } = req.params;
 
-  const game = await PuzzleService.getPuzzleById(id);
-  if (!game || (game.creator_id !== userId && !["ADMIN", "SUPER_ADMIN"].includes(userRole))) {
-    return res.status(403).json({ success: false, message: "Akses ditolak" });
+    const result = await PuzzleService.updatePuzzle(id, req.body, userId, userRole);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
   }
-
-  const result = await PuzzleService.updatePuzzle(id, req.body);
-  res.json({ success: true, data: result });
 };
 
-export const deletePuzzle = async (req: AuthedRequest, res: Response) => {
-  const userId = req.user!.user_id;
-  const userRole = req.user!.role;
-  const { id } = req.params;
+export const deletePuzzle = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.user_id;
+    const userRole = req.user!.role;
+    const { id } = req.params;
 
-  const game = await PuzzleService.getPuzzleById(id);
-  if (!game || (game.creator_id !== userId && !["ADMIN", "SUPER_ADMIN"].includes(userRole))) {
-    return res.status(403).json({ success: false, message: "Akses ditolak" });
+    await PuzzleService.deletePuzzle(id, userId, userRole);
+    res.json({ success: true, message: "Puzzle berhasil dihapus" });
+  } catch (error) {
+    next(error);
   }
-
-  const result = await PuzzleService.deletePuzzle(id);
-  res.json({ success: true, data: result });
 };

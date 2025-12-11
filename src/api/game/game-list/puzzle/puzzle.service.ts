@@ -2,6 +2,9 @@ import { prisma } from "../../../../common/config/prisma.config";
 import type { PuzzleGameJson } from "../../../../common/interface/games/puzzle.interface";
 import { FileManager } from "../../../../utils";
 import type { AuthedRequest } from "../../../../common/interface/request.type"; 
+import { ErrorResponse } from "../../../../common/response/error.response";
+import { StatusCodes } from "http-status-codes";
+import type { ROLE } from "@prisma/client";
 
 export const getPuzzleList = async () => {
   return prisma.games.findMany({
@@ -26,7 +29,7 @@ export const getPuzzleById = async (gameId: string) => {
 
 export const startPuzzle = async (userId: string, gameId: string) => {
   const game = await getPuzzleById(gameId);
-  if (!game) throw new Error("Puzzle not found");
+  if (!game) throw new ErrorResponse(StatusCodes.NOT_FOUND,"Puzzle not found");
 
   // Increment play count
   await prisma.games.update({
@@ -61,7 +64,7 @@ export const finishPuzzle = async (userId: string, payload: {
   });
 
   if (!session || session.userId !== userId) {
-    throw new Error("Session not found or unauthorized");
+    throw new ErrorResponse(StatusCodes.NOT_FOUND,"Session not found or unauthorized");
   }
 
   // Calculate duration
@@ -108,8 +111,7 @@ export const uploadPuzzleImage = async (userId: string, file: File) => {
   return { imageUrl: imagePath };
 };
 
-
-
+// === CREATE PUZZLE ===
 export const createPuzzle = async (
   userId: string,
   payload: {
@@ -126,10 +128,14 @@ export const createPuzzle = async (
   const exists = await prisma.games.findFirst({
     where: { name: payload.name, game_template: { slug: "puzzle" } },
   });
-  if (exists) throw new Error("Nama puzzle sudah digunakan");
+  if (exists) throw new ErrorResponse(StatusCodes.BAD_REQUEST, "Nama puzzle sudah digunakan");
 
   const template = await prisma.gameTemplates.findUnique({ where: { slug: "puzzle" } });
-  if (!template) throw new Error("Template puzzle tidak ditemukan");
+  if (!template) throw new ErrorResponse(StatusCodes.INTERNAL_SERVER_ERROR,"Template puzzle tidak ditemukan");
+
+  const timeLimitSec = payload.difficulty === "easy" ? 300
+                     : payload.difficulty === "medium" ? 600
+                     : 900;
 
   const gameJson: PuzzleGameJson = {
     title: payload.name,
@@ -139,6 +145,7 @@ export const createPuzzle = async (
     rows: payload.rows,
     cols: payload.cols,
     difficulty: payload.difficulty,
+    timeLimitSec, 
   };
 
   return prisma.games.create({
@@ -155,6 +162,7 @@ export const createPuzzle = async (
   });
 };
 
+// === UPDATE PUZZLE ===
 export const updatePuzzle = async (
   gameId: string,
   payload: Partial<{
@@ -166,40 +174,87 @@ export const updatePuzzle = async (
     cols: number;
     difficulty: "easy" | "medium" | "hard";
     is_published: boolean;
-  }>
+  }>,
+  userId: string,
+  userRole: ROLE
 ) => {
   const game = await getPuzzleById(gameId);
-  if (!game) throw new Error("Puzzle tidak ditemukan");
+  if (!game) throw new ErrorResponse(StatusCodes.NOT_FOUND, "Puzzle tidak ditemukan");
 
-  const updatedJson = { ...(game.game_json as unknown as PuzzleGameJson) };
-  if (payload.imageUrl !== undefined) updatedJson.imageUrl = payload.imageUrl;
-  if (payload.thumbnail !== undefined) updatedJson.thumbnail = payload.thumbnail;
-  if (payload.rows !== undefined) updatedJson.rows = payload.rows;
-  if (payload.cols !== undefined) updatedJson.cols = payload.cols;
-  if (payload.difficulty !== undefined) updatedJson.difficulty = payload.difficulty;
+  if (game.creator_id !== userId && userRole !== "SUPER_ADMIN") {
+    throw new ErrorResponse(StatusCodes.FORBIDDEN, "Kamu tidak boleh edit puzzle ini");
+  }
+
+  const currentJson = game.game_json as unknown as PuzzleGameJson;
+
+  if (payload.imageUrl && payload.imageUrl !== currentJson.imageUrl) {
+    await FileManager.remove(currentJson.imageUrl).catch(() => {});
+  }
+  if (payload.thumbnail && payload.thumbnail !== currentJson.thumbnail && payload.thumbnail !== currentJson.imageUrl) {
+    await FileManager.remove(currentJson.thumbnail!).catch(() => {});
+  }
+
+  const timeLimitSec = payload.difficulty
+    ? payload.difficulty === "easy" ? 300
+    : payload.difficulty === "medium" ? 600
+    : 900
+    : currentJson.timeLimitSec;
+
+  const updatedJson: PuzzleGameJson = {
+    title: payload.name ?? currentJson.title,
+    description: payload.description ?? currentJson.description ?? "",
+    imageUrl: payload.imageUrl ?? currentJson.imageUrl,
+    thumbnail: payload.thumbnail ?? currentJson.thumbnail ?? currentJson.imageUrl,
+    rows: payload.rows ?? currentJson.rows,
+    cols: payload.cols ?? currentJson.cols,
+    difficulty: payload.difficulty ?? currentJson.difficulty,
+    timeLimitSec,
+  };
 
   return prisma.games.update({
     where: { id: gameId },
     data: {
       name: payload.name ?? game.name,
       description: payload.description ?? game.description,
-      thumbnail_image: payload.thumbnail || payload.imageUrl || game.thumbnail_image,
+      thumbnail_image: payload.thumbnail ?? payload.imageUrl ?? game.thumbnail_image,
       is_published: payload.is_published ?? game.is_published,
       game_json: updatedJson as any,
     },
   });
 };
 
-export const deletePuzzle = async (gameId: string) => {
+// === DELETE PUZZLE ===
+export const deletePuzzle = async (
+  gameId: string,
+  userId: string,
+  userRole: ROLE
+) => {
   const game = await getPuzzleById(gameId);
-  if (!game) throw new Error("Puzzle tidak ditemukan");
+  if (!game) throw new ErrorResponse(StatusCodes.NOT_FOUND, "Puzzle tidak ditemukan");
+
+  if (game.creator_id !== userId && userRole !== "SUPER_ADMIN") {
+    throw new ErrorResponse(StatusCodes.FORBIDDEN, "Kamu tidak boleh hapus puzzle ini");
+  }
+
+  const json = game.game_json as unknown as PuzzleGameJson;
+
+  await Promise.all([
+    FileManager.remove(json.imageUrl).catch(() => {}),
+    json.thumbnail && json.thumbnail !== json.imageUrl
+      ? FileManager.remove(json.thumbnail).catch(() => {})
+      : Promise.resolve(),
+  ]);
 
   await prisma.games.delete({ where: { id: gameId } });
-  return { message: "Puzzle berhasil dihapus" };
+  return { message: "Puzzle dan gambar berhasil dihapus!" };
 };
 
-export const getPuzzleForEdit = async (gameId: string) => {
+export const getPuzzleForEdit = async (
+  gameId: string,
+  userId: string,
+  userRole: ROLE
+) => {
   const game = await getPuzzleById(gameId);
-  if (!game) throw new Error("Puzzle tidak ditemukan");
+  if (!game) throw new ErrorResponse(StatusCodes.NOT_FOUND, "Puzzle tidak ditemukan");
   return game;
 };

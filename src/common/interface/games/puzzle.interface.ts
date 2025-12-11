@@ -6,6 +6,7 @@ export interface PuzzleGameJson {
   rows: number;       
   cols: number;       
   difficulty: "easy" | "medium" | "hard"; 
+  timeLimitSec: number;
 }
 
 export interface PuzzleStartResponse {
