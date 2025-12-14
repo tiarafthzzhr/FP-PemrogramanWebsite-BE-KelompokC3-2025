@@ -130,17 +130,26 @@ export abstract class PuzzleService {
       data.thumbnail_image,
     );
 
-    const puzzleImagePath = await FileManager.upload(
-      `game/puzzle/${newPuzzleId}`,
-      data.files_to_upload[0],
-    );
+    const imageArray: string[] = [];
 
+    if (data.files_to_upload && data.files_to_upload.length > 0) {
+      for (const file of data.files_to_upload) {
+        const path = await FileManager.upload(
+          `game/puzzle/${newPuzzleId}`,
+          file,
+        );
+        imageArray.push(path);
+      }
+    }
+
+    const puzzleImagePath = imageArray.length > 0 ? imageArray[0] : '';
     const timeLimitSec = this.getTimeLimitByDifficulty(data.difficulty);
 
     const puzzleJson: IPuzzleJson = {
       title: data.name,
       description: data.description ?? '',
       imageUrl: puzzleImagePath,
+      images: imageArray,
       thumbnail: thumbnailImagePath,
       rows: data.rows,
       cols: data.cols,
@@ -167,11 +176,12 @@ export abstract class PuzzleService {
     return newGame;
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   static async updatePuzzle(
     gameId: string,
     data: IUpdatePuzzle,
-    userId: string,
-    userRole: ROLE,
+    _userId: string,
+    _userRole: ROLE,
   ) {
     const game = await prisma.games.findUnique({
       where: { id: gameId },
@@ -217,6 +227,10 @@ export abstract class PuzzleService {
       oldImagePaths.push(oldPuzzleJson.imageUrl);
     }
 
+    if (oldPuzzleJson?.images) {
+      oldImagePaths.push(...oldPuzzleJson.images);
+    }
+
     if (
       oldPuzzleJson?.thumbnail &&
       oldPuzzleJson.thumbnail !== oldPuzzleJson.imageUrl
@@ -230,6 +244,8 @@ export abstract class PuzzleService {
 
     let thumbnailImagePath = game.thumbnail_image;
     let puzzleImagePath = oldPuzzleJson?.imageUrl ?? '';
+    let imageArray: string[] =
+      oldPuzzleJson?.images ?? (puzzleImagePath ? [puzzleImagePath] : []);
 
     if (data.thumbnail_image) {
       thumbnailImagePath = await FileManager.upload(
@@ -239,10 +255,16 @@ export abstract class PuzzleService {
     }
 
     if (data.files_to_upload && data.files_to_upload.length > 0) {
-      puzzleImagePath = await FileManager.upload(
-        `game/puzzle/${gameId}`,
-        data.files_to_upload[0],
-      );
+      // If new files are uploaded, replace the old images
+      const newUploadedPaths: string[] = [];
+
+      for (const file of data.files_to_upload) {
+        const path = await FileManager.upload(`game/puzzle/${gameId}`, file);
+        newUploadedPaths.push(path);
+      }
+
+      imageArray = newUploadedPaths;
+      puzzleImagePath = imageArray[0];
     }
 
     const difficulty = data.difficulty ?? oldPuzzleJson?.difficulty ?? 'medium';
@@ -252,6 +274,7 @@ export abstract class PuzzleService {
       title: data.name ?? oldPuzzleJson?.title ?? game.name,
       description: data.description ?? oldPuzzleJson?.description ?? '',
       imageUrl: puzzleImagePath,
+      images: imageArray,
       thumbnail: thumbnailImagePath,
       rows: data.rows ?? oldPuzzleJson?.rows ?? 3,
       cols: data.cols ?? oldPuzzleJson?.cols ?? 3,
@@ -274,7 +297,7 @@ export abstract class PuzzleService {
     });
 
     // Clean up old images that are no longer used
-    const newImagePaths = new Set([thumbnailImagePath, puzzleImagePath]);
+    const newImagePaths = new Set([thumbnailImagePath, ...imageArray]);
 
     for (const oldPath of oldImagePaths) {
       if (!newImagePaths.has(oldPath)) {
@@ -285,7 +308,8 @@ export abstract class PuzzleService {
     return updatedGame;
   }
 
-  static async deletePuzzle(gameId: string, userId: string, userRole: ROLE) {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  static async deletePuzzle(gameId: string, _userId: string, _userRole: ROLE) {
     const game = await prisma.games.findUnique({
       where: { id: gameId },
       select: {
@@ -364,20 +388,17 @@ export abstract class PuzzleService {
 
     const gameJson = game.game_json as unknown as IPuzzleJson;
     const difficulty = data.difficulty ?? 'easy';
-    const rows = difficulty === 'easy' ? 3 : difficulty === 'medium' ? 4 : 5;
+    const rows = this.getRowsByDifficulty(difficulty);
     const cols = rows;
     const timeLimitSec = this.getTimeLimitByDifficulty(difficulty);
 
-    // Choose image based on difficulty if naming convention is followed,
-    // OR just use same image but sliced differently.
-    // For now, allow dynamic slicing of the SAME image.
-
-    // Update: Use specific image for each difficulty
-    const specificImageUrl = `uploads/game/puzzle/${game.id}/${difficulty}.png`;
+    // Use the original image URL stored in the database
+    // The puzzle will be sliced dynamically based on difficulty (rows/cols)
+    const imageUrl = gameJson.imageUrl ?? '';
 
     const modifiedGameJson: IPuzzleJson = {
       ...gameJson,
-      imageUrl: specificImageUrl,
+      imageUrl,
       difficulty,
       rows,
       cols,
@@ -503,6 +524,28 @@ export abstract class PuzzleService {
 
       default: {
         return 600;
+      }
+    }
+  }
+
+  private static getRowsByDifficulty(
+    difficulty: 'easy' | 'medium' | 'hard',
+  ): number {
+    switch (difficulty) {
+      case 'easy': {
+        return 3;
+      }
+
+      case 'medium': {
+        return 4;
+      }
+
+      case 'hard': {
+        return 5;
+      }
+
+      default: {
+        return 3;
       }
     }
   }

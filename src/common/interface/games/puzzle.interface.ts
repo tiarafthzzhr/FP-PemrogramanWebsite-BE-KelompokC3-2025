@@ -2,6 +2,7 @@ export interface IPuzzleJson {
   title: string;
   description?: string;
   imageUrl: string;
+  images?: string[];
   thumbnail?: string;
   rows: number;
   cols: number;

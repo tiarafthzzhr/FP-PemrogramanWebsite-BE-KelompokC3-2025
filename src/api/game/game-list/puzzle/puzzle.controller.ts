@@ -242,7 +242,7 @@ export const PuzzleController = Router()
       schema: CreatePuzzleSchema,
       file_fields: [
         { name: 'thumbnail_image', maxCount: 1 },
-        { name: 'files_to_upload', maxCount: 1 },
+        { name: 'files_to_upload', maxCount: 20 },
       ],
     }),
     async (
@@ -275,7 +275,7 @@ export const PuzzleController = Router()
       schema: UpdatePuzzleSchema,
       file_fields: [
         { name: 'thumbnail_image', maxCount: 1 },
-        { name: 'files_to_upload', maxCount: 1 },
+        { name: 'files_to_upload', maxCount: 20 },
       ],
     }),
     async (

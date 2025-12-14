@@ -9,7 +9,7 @@ export const CreatePuzzleSchema = z.object({
   files_to_upload: fileArraySchema({
     max_size: 2 * 1024 * 1024,
     min_amount: 1,
-    max_amount: 1,
+    max_amount: 20,
   }),
   is_publish_immediately: StringToBooleanSchema.default(false),
   rows: z.coerce.number().min(2).max(10).default(3),

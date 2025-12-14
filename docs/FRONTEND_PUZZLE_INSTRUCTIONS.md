@@ -49,9 +49,13 @@ src/
 │   │   └── types/
 │   │       └── puzzle.types.ts        # TypeScript interfaces
 │   │
+│   │   ├── services/
+│   │   │   └── puzzle.service.ts      # API service layer
+│   │   └── types/
+│   │       └── puzzle.types.ts        # TypeScript interfaces
+│   │
 │   └── admin/
 │       └── puzzle/
-│           ├── index.tsx              # Admin puzzle list
 │           ├── create.tsx             # Create new puzzle
 │           └── edit/
 │               └── [id].tsx           # Edit puzzle
@@ -118,29 +122,21 @@ export interface LeaderboardEntry {
 }
 
 export interface CreatePuzzlePayload {
-  title: string;
+  name: string;
   description: string;
-  thumbnail: string;
-  image_easy: string;
-  image_medium: string;
-  image_hard: string;
-  time_limit_easy?: number;    // default: 300 (5 min)
-  time_limit_medium?: number;  // default: 180 (3 min)
-  time_limit_hard?: number;    // default: 120 (2 min)
-  is_published?: boolean;      // default: true
+  is_publish_immediately?: boolean;
+  rows?: number;
+  cols?: number;
+  difficulty?: Difficulty;
 }
 
 export interface UpdatePuzzlePayload {
-  title?: string;
+  name?: string;
   description?: string;
-  thumbnail?: string;
-  image_easy?: string;
-  image_medium?: string;
-  image_hard?: string;
-  time_limit_easy?: number;
-  time_limit_medium?: number;
-  time_limit_hard?: number;
   is_published?: boolean;
+  rows?: number;
+  cols?: number;
+  difficulty?: Difficulty;
 }
 
 export interface FinishPuzzlePayload {
@@ -296,11 +292,35 @@ export const puzzleApi = {
   /**
    * Create new puzzle (admin only)
    */
-  create: async (payload: CreatePuzzlePayload): Promise<PuzzleGame> => {
+  /**
+   * Create new puzzle (admin only)
+   */
+  create: async (payload: CreatePuzzlePayload, thumbnail: File, files: File[]): Promise<PuzzleGame> => {
+    const formData = new FormData();
+    formData.append('name', payload.name);
+    formData.append('description', payload.description);
+    if (payload.is_publish_immediately !== undefined) {
+      formData.append('is_publish_immediately', String(payload.is_publish_immediately));
+    }
+    if (payload.rows) formData.append('rows', String(payload.rows));
+    if (payload.cols) formData.append('cols', String(payload.cols));
+    if (payload.difficulty) formData.append('difficulty', payload.difficulty);
+    
+    formData.append('thumbnail_image', thumbnail);
+    
+    files.forEach((file) => {
+      formData.append('files_to_upload', file);
+    });
+
     const response = await axios.post(
       `${API_BASE_URL}/api/game/game-type/puzzle`,
-      payload,
-      { headers: getAuthHeader() }
+      formData,
+      {
+        headers: {
+          ...getAuthHeader(),
+          'Content-Type': 'multipart/form-data',
+        },
+      }
     );
     return response.data.data;
   },
@@ -310,12 +330,39 @@ export const puzzleApi = {
    */
   update: async (
     gameId: string,
-    payload: UpdatePuzzlePayload
+    payload: UpdatePuzzlePayload,
+    thumbnail?: File,
+    files?: File[]
   ): Promise<PuzzleGame> => {
+    const formData = new FormData();
+    if (payload.name) formData.append('name', payload.name);
+    if (payload.description) formData.append('description', payload.description);
+    if (payload.is_published !== undefined) {
+      formData.append('is_publish', String(payload.is_published));
+    }
+     if (payload.rows) formData.append('rows', String(payload.rows));
+    if (payload.cols) formData.append('cols', String(payload.cols));
+    if (payload.difficulty) formData.append('difficulty', payload.difficulty);
+
+    if (thumbnail) {
+      formData.append('thumbnail_image', thumbnail);
+    }
+    
+    if (files && files.length > 0) {
+      files.forEach((file) => {
+        formData.append('files_to_upload', file);
+      });
+    }
+
     const response = await axios.patch(
       `${API_BASE_URL}/api/game/game-type/puzzle/${gameId}`,
-      payload,
-      { headers: getAuthHeader() }
+      formData,
+      {
+         headers: {
+          ...getAuthHeader(),
+          'Content-Type': 'multipart/form-data',
+        },
+      }
     );
     return response.data.data;
   },
@@ -711,105 +758,9 @@ export default function PuzzleGame() {
 ### Admin Puzzle List
 
 ```typescript
-// src/pages/admin/puzzle/index.tsx
+// Page Removed as per requirements
+// Management is handled elsewhere or not needed in this specific form.
 
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { puzzleApi } from '../../puzzle/services/puzzle.service';
-import type { PuzzleGame } from '../../puzzle/types/puzzle.types';
-
-export default function AdminPuzzleList() {
-  const [puzzles, setPuzzles] = useState<PuzzleGame[]>([]);
-  const [loading, setLoading] = useState(true);
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    const fetchPuzzles = async () => {
-      try {
-        const data = await puzzleApi.getAll();
-        setPuzzles(data);
-      } catch (error) {
-        console.error('Failed to fetch puzzles:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchPuzzles();
-  }, []);
-
-  const handleDelete = async (gameId: string) => {
-    if (!confirm('Are you sure you want to delete this puzzle?')) return;
-    
-    try {
-      await puzzleApi.delete(gameId);
-      setPuzzles(puzzles.filter(p => p.game_id !== gameId));
-    } catch (error) {
-      console.error('Failed to delete puzzle:', error);
-      alert('Failed to delete puzzle');
-    }
-  };
-
-  if (loading) {
-    return <div className="loading">Loading...</div>;
-  }
-
-  return (
-    <div className="admin-puzzle-list">
-      <div className="header">
-        <h1>🧩 Manage Puzzles</h1>
-        <button
-          onClick={() => navigate('/admin/puzzle/create')}
-          className="create-btn"
-        >
-          + Create New Puzzle
-        </button>
-      </div>
-
-      <table className="puzzle-table">
-        <thead>
-          <tr>
-            <th>Thumbnail</th>
-            <th>Title</th>
-            <th>Status</th>
-            <th>Plays</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {puzzles.map((puzzle) => (
-            <tr key={puzzle.game_id}>
-              <td>
-                <img src={puzzle.thumbnail} alt={puzzle.title} width={60} />
-              </td>
-              <td>{puzzle.title}</td>
-              <td>
-                <span className={puzzle.is_published ? 'published' : 'draft'}>
-                  {puzzle.is_published ? '✅ Published' : '📝 Draft'}
-                </span>
-              </td>
-              <td>{puzzle.play_count}</td>
-              <td>
-                <button
-                  onClick={() => navigate(`/admin/puzzle/edit/${puzzle.game_id}`)}
-                  className="edit-btn"
-                >
-                  ✏️ Edit
-                </button>
-                <button
-                  onClick={() => handleDelete(puzzle.game_id)}
-                  className="delete-btn"
-                >
-                  🗑️ Delete
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 ```
 
 ### Create Puzzle Page
@@ -1067,14 +1018,7 @@ export const ProtectedRoute = ({
 ```typescript
 // Di router config
 
-<Route
-  path="/admin/puzzle"
-  element={
-    <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
-      <AdminPuzzleList />
-    </ProtectedRoute>
-  }
-/>
+
 <Route
   path="/admin/puzzle/create"
   element={
@@ -1129,7 +1073,7 @@ Semua response dari backend mengikuti format:
 - [ ] Create Puzzle Game page with timer
 - [ ] Implement Exit Button (with play count increment)
 - [ ] Implement Pause Button & Overlay
-- [ ] Create Admin Puzzle List page
+
 - [ ] Create Admin Create Puzzle page
 - [ ] Create Admin Edit Puzzle page
 - [ ] Add route protection for admin pages
