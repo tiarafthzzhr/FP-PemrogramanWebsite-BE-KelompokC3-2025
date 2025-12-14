@@ -1,9 +1,10 @@
-import { z } from "zod";
+import z from 'zod';
 
-export const finishPuzzleSchema = z.object({
-  sessionId: z.string().uuid("sessionId must be a valid UUID"),
-  gameId: z.string().uuid("gameId must be a valid UUID"),
-  moveCount: z.number().int().min(0).optional().default(0),
-}).strict();
+export const FinishPuzzleSchema = z.object({
+  sessionId: z.string().uuid(),
+  gameId: z.string().uuid(),
+  moveCount: z.coerce.number().min(0).optional(),
+  timeTaken: z.coerce.number().min(0).optional(), // Time in seconds
+});
 
-export type FinishPuzzlePayload = z.infer<typeof finishPuzzleSchema>;
+export type IFinishPuzzle = z.infer<typeof FinishPuzzleSchema>;

@@ -1,260 +1,546 @@
-import { prisma } from "../../../../common/config/prisma.config";
-import type { PuzzleGameJson } from "../../../../common/interface/games/puzzle.interface";
-import { FileManager } from "../../../../utils";
-import type { AuthedRequest } from "../../../../common/interface/request.type"; 
-import { ErrorResponse } from "../../../../common/response/error.response";
-import { StatusCodes } from "http-status-codes";
-import type { ROLE } from "@prisma/client";
+import { type Prisma, type ROLE } from '@prisma/client';
+import { StatusCodes } from 'http-status-codes';
+import { v4 } from 'uuid';
 
-export const getPuzzleList = async () => {
-  return prisma.games.findMany({
-    where: { game_template: { slug: "puzzle" }, is_published: true },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      thumbnail_image: true,
-      game_json: true,
-      total_played: true,
-    },
-    orderBy: { created_at: "desc" },
-  });
-};
+import { ErrorResponse, type IPuzzleJson, prisma } from '@/common';
+import { FileManager } from '@/utils';
 
-export const getPuzzleById = async (gameId: string) => {
-  return prisma.games.findUnique({
-    where: { id: gameId, game_template: { slug: "puzzle" } },
-  });
-};
+import {
+  type ICreatePuzzle,
+  type IFinishPuzzle,
+  type IStartPuzzle,
+  type IUpdatePuzzle,
+} from './schema';
 
-export const startPuzzle = async (userId: string, gameId: string) => {
-  const game = await getPuzzleById(gameId);
-  if (!game) throw new ErrorResponse(StatusCodes.NOT_FOUND,"Puzzle not found");
+export abstract class PuzzleService {
+  // eslint-disable-next-line @typescript-eslint/naming-convention
+  private static PUZZLE_SLUG = 'puzzle';
 
-  // Increment play count
-  await prisma.games.update({
-    where: { id: gameId },
-    data: { total_played: { increment: 1 } },
-  });
+  static async getPuzzleList(includeDrafts = false) {
+    const whereClause: Prisma.GamesWhereInput = {
+      game_template: { slug: this.PUZZLE_SLUG },
+    };
 
-  // Create a puzzle session
-  const session = await prisma.puzzleSession.create({
-    data: {
-      userId,
-      puzzleId: gameId,
-      startedAt: new Date(),
-    },
-  });
+    if (!includeDrafts) {
+      whereClause.is_published = true;
+    }
 
-  return {
-    sessionId: session.id,
-    gameId: game.id,
-    gameJson: game.game_json as unknown as PuzzleGameJson,
-  };
-};
+    const puzzles = await prisma.games.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        thumbnail_image: true,
+        game_json: true,
+        total_played: true,
+        created_at: true,
+        is_published: true,
+      },
+      orderBy: { created_at: 'desc' },
+    });
 
-export const finishPuzzle = async (userId: string, payload: {
-  sessionId: string;
-  gameId: string;
-  moveCount?: number;
-}) => {
-  // Get the session and verify ownership
-  const session = await prisma.puzzleSession.findUnique({
-    where: { id: payload.sessionId },
-  });
+    return puzzles.map(puzzle => {
+      const gameJson = puzzle.game_json as any;
 
-  if (!session || session.userId !== userId) {
-    throw new ErrorResponse(StatusCodes.NOT_FOUND,"Session not found or unauthorized");
+      return {
+        ...puzzle,
+        difficulty: gameJson?.difficulty || 'medium',
+        rows: gameJson?.rows,
+        cols: gameJson?.cols,
+      };
+    });
   }
 
-  // Calculate duration
-  const finishedAt = new Date();
-  const durationSec = Math.floor(
-    (finishedAt.getTime() - session.startedAt.getTime()) / 1000
-  );
+  static async getPuzzleById(gameId: string) {
+    const game = await prisma.games.findUnique({
+      where: { id: gameId },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        thumbnail_image: true,
+        is_published: true,
+        game_json: true,
+        total_played: true,
+        created_at: true,
+        game_template: {
+          select: { slug: true },
+        },
+      },
+    });
 
-  // Update session with finish data
-  const updatedSession = await prisma.puzzleSession.update({
-    where: { id: payload.sessionId },
-    data: {
+    if (!game || game.game_template.slug !== this.PUZZLE_SLUG) {
+      return null;
+    }
+
+    return {
+      ...game,
+      game_template: undefined,
+    };
+  }
+
+  static async getPuzzleForEdit(
+    gameId: string,
+    userId: string,
+    userRole: ROLE,
+  ) {
+    const game = await prisma.games.findUnique({
+      where: { id: gameId },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        thumbnail_image: true,
+        is_published: true,
+        game_json: true,
+        creator_id: true,
+        game_template: {
+          select: { slug: true },
+        },
+      },
+    });
+
+    if (!game || game.game_template.slug !== this.PUZZLE_SLUG) {
+      throw new ErrorResponse(StatusCodes.NOT_FOUND, 'Puzzle not found');
+    }
+
+    if (userRole !== 'SUPER_ADMIN' && game.creator_id !== userId) {
+      throw new ErrorResponse(
+        StatusCodes.FORBIDDEN,
+        'User cannot access this puzzle',
+      );
+    }
+
+    return {
+      ...game,
+      creator_id: undefined,
+      game_template: undefined,
+    };
+  }
+
+  static async createPuzzle(userId: string, data: ICreatePuzzle) {
+    await this.existGameCheck(data.name);
+
+    const newPuzzleId = v4();
+    const puzzleTemplateId = await this.getGameTemplateId();
+
+    const thumbnailImagePath = await FileManager.upload(
+      `game/puzzle/${newPuzzleId}`,
+      data.thumbnail_image,
+    );
+
+    const puzzleImagePath = await FileManager.upload(
+      `game/puzzle/${newPuzzleId}`,
+      data.files_to_upload[0],
+    );
+
+    const timeLimitSec = this.getTimeLimitByDifficulty(data.difficulty);
+
+    const puzzleJson: IPuzzleJson = {
+      title: data.name,
+      description: data.description ?? '',
+      imageUrl: puzzleImagePath,
+      thumbnail: thumbnailImagePath,
+      rows: data.rows,
+      cols: data.cols,
+      difficulty: data.difficulty,
+      timeLimitSec,
+    };
+
+    const newGame = await prisma.games.create({
+      data: {
+        id: newPuzzleId,
+        game_template_id: puzzleTemplateId,
+        creator_id: userId,
+        name: data.name,
+        description: data.description ?? '',
+        thumbnail_image: thumbnailImagePath,
+        is_published: data.is_publish_immediately ?? false,
+        game_json: puzzleJson as unknown as Prisma.InputJsonValue,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    return newGame;
+  }
+
+  static async updatePuzzle(
+    gameId: string,
+    data: IUpdatePuzzle,
+    userId: string,
+    userRole: ROLE,
+  ) {
+    const game = await prisma.games.findUnique({
+      where: { id: gameId },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        thumbnail_image: true,
+        is_published: true,
+        game_json: true,
+        creator_id: true,
+        game_template: {
+          select: { slug: true },
+        },
+      },
+    });
+
+    if (!game || game.game_template.slug !== this.PUZZLE_SLUG) {
+      throw new ErrorResponse(StatusCodes.NOT_FOUND, 'Puzzle not found');
+    }
+
+    // All ADMIN and SUPER_ADMIN can edit any puzzle
+    // (Authorization already handled by controller middleware)
+
+    if (data.name) {
+      const isNameExist = await prisma.games.findUnique({
+        where: { name: data.name },
+        select: { id: true },
+      });
+
+      if (isNameExist && isNameExist.id !== gameId) {
+        throw new ErrorResponse(
+          StatusCodes.BAD_REQUEST,
+          'Puzzle name is already used',
+        );
+      }
+    }
+
+    const oldPuzzleJson = game.game_json as IPuzzleJson | null;
+    const oldImagePaths: string[] = [];
+
+    if (oldPuzzleJson?.imageUrl) {
+      oldImagePaths.push(oldPuzzleJson.imageUrl);
+    }
+
+    if (
+      oldPuzzleJson?.thumbnail &&
+      oldPuzzleJson.thumbnail !== oldPuzzleJson.imageUrl
+    ) {
+      oldImagePaths.push(oldPuzzleJson.thumbnail);
+    }
+
+    if (game.thumbnail_image && !oldImagePaths.includes(game.thumbnail_image)) {
+      oldImagePaths.push(game.thumbnail_image);
+    }
+
+    let thumbnailImagePath = game.thumbnail_image;
+    let puzzleImagePath = oldPuzzleJson?.imageUrl ?? '';
+
+    if (data.thumbnail_image) {
+      thumbnailImagePath = await FileManager.upload(
+        `game/puzzle/${gameId}`,
+        data.thumbnail_image,
+      );
+    }
+
+    if (data.files_to_upload && data.files_to_upload.length > 0) {
+      puzzleImagePath = await FileManager.upload(
+        `game/puzzle/${gameId}`,
+        data.files_to_upload[0],
+      );
+    }
+
+    const difficulty = data.difficulty ?? oldPuzzleJson?.difficulty ?? 'medium';
+    const timeLimitSec = this.getTimeLimitByDifficulty(difficulty);
+
+    const puzzleJson: IPuzzleJson = {
+      title: data.name ?? oldPuzzleJson?.title ?? game.name,
+      description: data.description ?? oldPuzzleJson?.description ?? '',
+      imageUrl: puzzleImagePath,
+      thumbnail: thumbnailImagePath,
+      rows: data.rows ?? oldPuzzleJson?.rows ?? 3,
+      cols: data.cols ?? oldPuzzleJson?.cols ?? 3,
+      difficulty,
+      timeLimitSec,
+    };
+
+    const updatedGame = await prisma.games.update({
+      where: { id: gameId },
+      data: {
+        name: data.name,
+        description: data.description,
+        thumbnail_image: thumbnailImagePath,
+        is_published: data.is_publish,
+        game_json: puzzleJson as unknown as Prisma.InputJsonValue,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    // Clean up old images that are no longer used
+    const newImagePaths = new Set([thumbnailImagePath, puzzleImagePath]);
+
+    for (const oldPath of oldImagePaths) {
+      if (!newImagePaths.has(oldPath)) {
+        await FileManager.remove(oldPath);
+      }
+    }
+
+    return updatedGame;
+  }
+
+  static async deletePuzzle(gameId: string, userId: string, userRole: ROLE) {
+    const game = await prisma.games.findUnique({
+      where: { id: gameId },
+      select: {
+        id: true,
+        thumbnail_image: true,
+        game_json: true,
+        creator_id: true,
+      },
+    });
+
+    if (!game) {
+      throw new ErrorResponse(StatusCodes.NOT_FOUND, 'Puzzle not found');
+    }
+
+    // All ADMIN and SUPER_ADMIN can delete any puzzle
+    // (Authorization already handled by controller middleware)
+
+    const oldPuzzleJson = game.game_json as IPuzzleJson | null;
+    const oldImagePaths: string[] = [];
+
+    if (oldPuzzleJson?.imageUrl) {
+      oldImagePaths.push(oldPuzzleJson.imageUrl);
+    }
+
+    if (
+      oldPuzzleJson?.thumbnail &&
+      oldPuzzleJson.thumbnail !== oldPuzzleJson.imageUrl
+    ) {
+      oldImagePaths.push(oldPuzzleJson.thumbnail);
+    }
+
+    if (game.thumbnail_image && !oldImagePaths.includes(game.thumbnail_image)) {
+      oldImagePaths.push(game.thumbnail_image);
+    }
+
+    for (const path of oldImagePaths) {
+      await FileManager.remove(path);
+    }
+
+    await prisma.games.delete({ where: { id: gameId } });
+
+    return { id: gameId };
+  }
+
+  static async startPuzzle(userId: string, data: IStartPuzzle) {
+    const game = await prisma.games.findUnique({
+      where: { id: data.gameId },
+      select: {
+        id: true,
+        name: true,
+        is_published: true,
+        game_json: true,
+        game_template: {
+          select: { slug: true },
+        },
+      },
+    });
+
+    if (!game || game.game_template.slug !== this.PUZZLE_SLUG) {
+      throw new ErrorResponse(StatusCodes.NOT_FOUND, 'Puzzle not found');
+    }
+
+    if (!game.is_published) {
+      throw new ErrorResponse(StatusCodes.FORBIDDEN, 'Puzzle is not published');
+    }
+
+    // Increment play count
+    await prisma.games.update({
+      where: { id: data.gameId },
+      data: { total_played: { increment: 1 } },
+    });
+
+    // Generate a session ID for tracking (stored client-side)
+    const sessionId = v4();
+    const startedAt = new Date();
+
+    const gameJson = game.game_json as unknown as IPuzzleJson;
+    const difficulty = data.difficulty ?? 'easy';
+    const rows = difficulty === 'easy' ? 3 : difficulty === 'medium' ? 4 : 5;
+    const cols = rows;
+    const timeLimitSec = this.getTimeLimitByDifficulty(difficulty);
+
+    // Choose image based on difficulty if naming convention is followed,
+    // OR just use same image but sliced differently.
+    // For now, allow dynamic slicing of the SAME image.
+
+    // Update: Use specific image for each difficulty
+    const specificImageUrl = `uploads/game/puzzle/${game.id}/${difficulty}.png`;
+
+    const modifiedGameJson: IPuzzleJson = {
+      ...gameJson,
+      imageUrl: specificImageUrl,
+      difficulty,
+      rows,
+      cols,
+      timeLimitSec,
+    };
+
+    return {
+      sessionId,
+      gameId: game.id,
+      gameName: game.name,
+      startedAt,
+      gameJson: modifiedGameJson,
+    };
+  }
+
+  static async finishPuzzle(userId: string, data: IFinishPuzzle) {
+    const game = await prisma.games.findUnique({
+      where: { id: data.gameId },
+      select: {
+        id: true,
+        name: true,
+        thumbnail_image: true,
+        game_json: true,
+        game_template: {
+          select: { slug: true },
+        },
+      },
+    });
+
+    if (!game || game.game_template.slug !== this.PUZZLE_SLUG) {
+      throw new ErrorResponse(StatusCodes.NOT_FOUND, 'Puzzle not found');
+    }
+
+    const puzzleJson = game.game_json as unknown as IPuzzleJson;
+    const finishedAt = new Date();
+
+    // Calculate score based on time and moves
+    // Lower time and fewer moves = higher score
+    const baseScore = 1000;
+    const timePenalty = Math.min(data.timeTaken ?? 0, puzzleJson.timeLimitSec);
+    const movePenalty = (data.moveCount ?? 0) * 2;
+    const score = Math.max(baseScore - timePenalty - movePenalty, 100);
+
+    // Save to leaderboard if user is authenticated
+    if (userId !== 'anonymous') {
+      await prisma.leaderboard.create({
+        data: {
+          user_id: userId,
+          game_id: data.gameId,
+          score,
+          difficulty: puzzleJson.difficulty,
+          time_taken: data.timeTaken,
+        },
+      });
+
+      // Update user's total game played
+      await prisma.users.update({
+        where: { id: userId },
+        data: { total_game_played: { increment: 1 } },
+      });
+    }
+
+    return {
+      message: 'Puzzle completed!',
+      sessionId: data.sessionId,
       finishedAt,
-      durationSec,
-      moveCount: payload.moveCount ?? session.moveCount,
-    },
-  });
-
-  const game = await prisma.games.findUnique({
-    where: { id: payload.gameId },
-    select: { name: true, thumbnail_image: true },
-  });
-
-  return {
-    message: "Puzzle completed!",
-    sessionId: updatedSession.id,
-    startedAt: updatedSession.startedAt,
-    finishedAt: updatedSession.finishedAt,
-    totalDuration: updatedSession.durationSec,
-    moveCount: updatedSession.moveCount,
-    game: {
-      id: payload.gameId,
-      title: game?.name,
-      thumbnail: game?.thumbnail_image,
-    },
-  };
-};
-
-export const uploadPuzzleImage = async (userId: string, file: File) => {
-  const imagePath = await FileManager.upload(
-    `game/puzzle/${userId}`,
-    file
-  );
-  return { imageUrl: imagePath };
-};
-
-// === CREATE PUZZLE ===
-export const createPuzzle = async (
-  userId: string,
-  payload: {
-    name: string;
-    description?: string;
-    imageUrl: string;
-    thumbnail?: string;
-    rows: number;
-    cols: number;
-    difficulty: "easy" | "medium" | "hard";
-    is_published?: boolean;
-  }
-) => {
-  const exists = await prisma.games.findFirst({
-    where: { name: payload.name, game_template: { slug: "puzzle" } },
-  });
-  if (exists) throw new ErrorResponse(StatusCodes.BAD_REQUEST, "Nama puzzle sudah digunakan");
-
-  const template = await prisma.gameTemplates.findUnique({ where: { slug: "puzzle" } });
-  if (!template) throw new ErrorResponse(StatusCodes.INTERNAL_SERVER_ERROR,"Template puzzle tidak ditemukan");
-
-  const timeLimitSec = payload.difficulty === "easy" ? 300
-                     : payload.difficulty === "medium" ? 600
-                     : 900;
-
-  const gameJson: PuzzleGameJson = {
-    title: payload.name,
-    description: payload.description ?? "",
-    imageUrl: payload.imageUrl,
-    thumbnail: payload.thumbnail || payload.imageUrl,
-    rows: payload.rows,
-    cols: payload.cols,
-    difficulty: payload.difficulty,
-    timeLimitSec, 
-  };
-
-  return prisma.games.create({
-    data: {
-      id: crypto.randomUUID(),
-      name: payload.name,
-      description: payload.description ?? "",
-      thumbnail_image: payload.thumbnail || payload.imageUrl,
-      game_template_id: template.id,
-      creator_id: userId,
-      is_published: payload.is_published ?? false,
-      game_json: gameJson as any,
-    },
-  });
-};
-
-// === UPDATE PUZZLE ===
-export const updatePuzzle = async (
-  gameId: string,
-  payload: Partial<{
-    name: string;
-    description: string;
-    imageUrl: string;
-    thumbnail: string;
-    rows: number;
-    cols: number;
-    difficulty: "easy" | "medium" | "hard";
-    is_published: boolean;
-  }>,
-  userId: string,
-  userRole: ROLE
-) => {
-  const game = await getPuzzleById(gameId);
-  if (!game) throw new ErrorResponse(StatusCodes.NOT_FOUND, "Puzzle tidak ditemukan");
-
-  if (game.creator_id !== userId && userRole !== "SUPER_ADMIN") {
-    throw new ErrorResponse(StatusCodes.FORBIDDEN, "Kamu tidak boleh edit puzzle ini");
+      timeTaken: data.timeTaken,
+      moveCount: data.moveCount,
+      score,
+      game: {
+        id: game.id,
+        title: game.name,
+        thumbnail: game.thumbnail_image,
+      },
+    };
   }
 
-  const currentJson = game.game_json as unknown as PuzzleGameJson;
+  static async uploadPuzzleImage(userId: string, file: File) {
+    const imagePath = await FileManager.upload(`game/puzzle/${userId}`, file);
 
-  if (payload.imageUrl && payload.imageUrl !== currentJson.imageUrl) {
-    await FileManager.remove(currentJson.imageUrl).catch(() => {});
-  }
-  if (payload.thumbnail && payload.thumbnail !== currentJson.thumbnail && payload.thumbnail !== currentJson.imageUrl) {
-    await FileManager.remove(currentJson.thumbnail!).catch(() => {});
+    return { imageUrl: imagePath };
   }
 
-  const timeLimitSec = payload.difficulty
-    ? payload.difficulty === "easy" ? 300
-    : payload.difficulty === "medium" ? 600
-    : 900
-    : currentJson.timeLimitSec;
+  static async getLeaderboard(gameId: string, limit = 10) {
+    const leaderboard = await prisma.leaderboard.findMany({
+      where: { game_id: gameId },
+      select: {
+        id: true,
+        score: true,
+        difficulty: true,
+        time_taken: true,
+        created_at: true,
+        user: {
+          select: {
+            id: true,
+            username: true,
+            profile_picture: true,
+          },
+        },
+      },
+      orderBy: { score: 'desc' },
+      take: limit,
+    });
 
-  const updatedJson: PuzzleGameJson = {
-    title: payload.name ?? currentJson.title,
-    description: payload.description ?? currentJson.description ?? "",
-    imageUrl: payload.imageUrl ?? currentJson.imageUrl,
-    thumbnail: payload.thumbnail ?? currentJson.thumbnail ?? currentJson.imageUrl,
-    rows: payload.rows ?? currentJson.rows,
-    cols: payload.cols ?? currentJson.cols,
-    difficulty: payload.difficulty ?? currentJson.difficulty,
-    timeLimitSec,
-  };
-
-  return prisma.games.update({
-    where: { id: gameId },
-    data: {
-      name: payload.name ?? game.name,
-      description: payload.description ?? game.description,
-      thumbnail_image: payload.thumbnail ?? payload.imageUrl ?? game.thumbnail_image,
-      is_published: payload.is_published ?? game.is_published,
-      game_json: updatedJson as any,
-    },
-  });
-};
-
-// === DELETE PUZZLE ===
-export const deletePuzzle = async (
-  gameId: string,
-  userId: string,
-  userRole: ROLE
-) => {
-  const game = await getPuzzleById(gameId);
-  if (!game) throw new ErrorResponse(StatusCodes.NOT_FOUND, "Puzzle tidak ditemukan");
-
-  if (game.creator_id !== userId && userRole !== "SUPER_ADMIN") {
-    throw new ErrorResponse(StatusCodes.FORBIDDEN, "Kamu tidak boleh hapus puzzle ini");
+    return leaderboard;
   }
 
-  const json = game.game_json as unknown as PuzzleGameJson;
+  private static getTimeLimitByDifficulty(
+    difficulty: 'easy' | 'medium' | 'hard',
+  ): number {
+    switch (difficulty) {
+      case 'easy': {
+        return 300;
+      } // 5 minutes
 
-  await Promise.all([
-    FileManager.remove(json.imageUrl).catch(() => {}),
-    json.thumbnail && json.thumbnail !== json.imageUrl
-      ? FileManager.remove(json.thumbnail).catch(() => {})
-      : Promise.resolve(),
-  ]);
+      case 'medium': {
+        return 600;
+      } // 10 minutes
 
-  await prisma.games.delete({ where: { id: gameId } });
-  return { message: "Puzzle dan gambar berhasil dihapus!" };
-};
+      case 'hard': {
+        return 900;
+      } // 15 minutes
 
-export const getPuzzleForEdit = async (
-  gameId: string,
-  userId: string,
-  userRole: ROLE
-) => {
-  const game = await getPuzzleById(gameId);
-  if (!game) throw new ErrorResponse(StatusCodes.NOT_FOUND, "Puzzle tidak ditemukan");
-  return game;
-};
+      default: {
+        return 600;
+      }
+    }
+  }
+
+  private static async existGameCheck(gameName?: string) {
+    if (!gameName) return null;
+
+    const game = await prisma.games.findFirst({
+      where: {
+        name: gameName,
+        game_template: { slug: this.PUZZLE_SLUG },
+      },
+      select: { id: true },
+    });
+
+    if (game) {
+      throw new ErrorResponse(
+        StatusCodes.BAD_REQUEST,
+        'Puzzle name is already exist',
+      );
+    }
+
+    return game;
+  }
+
+  private static async getGameTemplateId() {
+    const result = await prisma.gameTemplates.findUnique({
+      where: { slug: this.PUZZLE_SLUG },
+      select: { id: true },
+    });
+
+    if (!result) {
+      throw new ErrorResponse(
+        StatusCodes.NOT_FOUND,
+        'Puzzle template not found',
+      );
+    }
+
+    return result.id;
+  }
+}

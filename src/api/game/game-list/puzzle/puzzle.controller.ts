@@ -1,105 +1,333 @@
-import { StatusCodes } from "http-status-codes";
-import { Request, Response } from "express";
-import type { AuthedRequest } from "../../../../common/interface";
-import { NextFunction } from "express";
-import * as PuzzleService from "./puzzle.service";
-import { SuccessResponse } from "../../../../common/response";
-import { finishPuzzleSchema } from "./schema";
+import {
+  type NextFunction,
+  type Request,
+  type Response,
+  Router,
+} from 'express';
+import { StatusCodes } from 'http-status-codes';
+import multer from 'multer';
 
-export const getPuzzleList = async (_: Request, res: Response) => {
-  const data = await PuzzleService.getPuzzleList();
-  const response = new SuccessResponse(StatusCodes.OK, "Puzzle list retrieved", data);
-  res.status(response.statusCode).json(response.json());
-};
+import {
+  type AuthedRequest,
+  SuccessResponse,
+  validateAuth,
+  validateBody,
+} from '@/common';
 
-export const getPuzzleById = async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const game = await PuzzleService.getPuzzleById(id);
-  if (!game) {
-    const response = new SuccessResponse(StatusCodes.NOT_FOUND, "Puzzle not found");
-    return res.status(response.statusCode).json(response.json());
-  }
-  const response = new SuccessResponse(StatusCodes.OK, "Puzzle retrieved", game);
-  res.status(response.statusCode).json(response.json());
-};
+import { PuzzleService } from './puzzle.service';
+import {
+  CreatePuzzleSchema,
+  FinishPuzzleSchema,
+  type ICreatePuzzle,
+  type IFinishPuzzle,
+  type IStartPuzzle,
+  type IUpdatePuzzle,
+  StartPuzzleSchema,
+  UpdatePuzzleSchema,
+} from './schema';
 
-export const startPuzzle = async (req: AuthedRequest, res: Response) => {
-  const userId = req.user?.user_id ?? "anonymous";
-  const { id } = req.params;
+const upload = multer({ storage: multer.memoryStorage() });
 
-  const result = await PuzzleService.startPuzzle(userId, id);
-  const response = new SuccessResponse(StatusCodes.CREATED, "Puzzle session started", result);
-  res.status(response.statusCode).json(response.json());
-};
+export const PuzzleController = Router()
+  // Get all puzzles (public)
+  .get(
+    '/',
+    validateAuth({ optional: true }),
+    async (request: AuthedRequest, response: Response, next: NextFunction) => {
+      try {
+        const isEditor =
+          request.user?.role === 'ADMIN' ||
+          request.user?.role === 'SUPER_ADMIN';
+        const data = await PuzzleService.getPuzzleList(isEditor);
+        const result = new SuccessResponse(
+          StatusCodes.OK,
+          'Puzzle list retrieved',
+          data,
+        );
 
-export const finishPuzzle = async (req: AuthedRequest, res: Response) => {
-  const userId = req.user?.user_id ?? "anonymous";
-  const payload = finishPuzzleSchema.parse(req.body); 
+        return response.status(result.statusCode).json(result.json());
+      } catch (error) {
+        next(error);
+      }
+    },
+  )
+  // Get puzzle by ID
+  .get(
+    '/:game_id',
+    validateAuth({ optional: true }),
+    async (
+      request: Request<{ game_id: string }>,
+      response: Response,
+      next: NextFunction,
+    ) => {
+      try {
+        const game = await PuzzleService.getPuzzleById(request.params.game_id);
 
-  const result = await PuzzleService.finishPuzzle(userId, payload);
-  const response = new SuccessResponse(StatusCodes.OK, "Puzzle completed successfully", result);
-  res.status(response.statusCode).json(response.json());
-};
+        if (!game) {
+          const result = new SuccessResponse(
+            StatusCodes.NOT_FOUND,
+            'Puzzle not found',
+          );
 
-export const uploadPuzzleImage = async (req: AuthedRequest, res: Response) => {
-  const userId = req.user?.user_id ?? "anonymous";
-  const file = req.file;
-  
-  if (!file) {
-    const response = new SuccessResponse(StatusCodes.BAD_REQUEST, "No file provided");
-    return res.status(response.statusCode).json(response.json());
-  }
+          return response.status(result.statusCode).json(result.json());
+        }
 
-  const result = await PuzzleService.uploadPuzzleImage(userId, new File([new Uint8Array(file.buffer)], file.originalname, { type: file.mimetype }));
-  const response = new SuccessResponse(StatusCodes.CREATED, "Image uploaded successfully", result);
-  res.status(response.statusCode).json(response.json());
-};
+        const result = new SuccessResponse(
+          StatusCodes.OK,
+          'Puzzle retrieved',
+          game,
+        );
 
-export const getPuzzleForEdit = async (req: AuthedRequest, res: Response, next: NextFunction) => {
-  try {
-    const userId = req.user!.user_id;
-    const userRole = req.user!.role;
-    const { id } = req.params;
+        return response.status(result.statusCode).json(result.json());
+      } catch (error) {
+        next(error);
+      }
+    },
+  )
+  // Get puzzle leaderboard
+  .get(
+    '/:game_id/leaderboard',
+    async (
+      request: Request<{ game_id: string }>,
+      response: Response,
+      next: NextFunction,
+    ) => {
+      try {
+        const leaderboard = await PuzzleService.getLeaderboard(
+          request.params.game_id,
+        );
+        const result = new SuccessResponse(
+          StatusCodes.OK,
+          'Leaderboard retrieved',
+          leaderboard,
+        );
 
-    const game = await PuzzleService.getPuzzleForEdit(id, userId, userRole);
-    res.json({ success: true, data: game });
-  } catch (error) {
-    next(error);
-  }
-};
+        return response.status(result.statusCode).json(result.json());
+      } catch (error) {
+        next(error);
+      }
+    },
+  )
+  // Get puzzle detail for editing (admin only)
+  .get(
+    '/:game_id/edit',
+    validateAuth({ allowed_roles: ['ADMIN', 'SUPER_ADMIN'] }),
+    async (
+      request: AuthedRequest<{ game_id: string }>,
+      response: Response,
+      next: NextFunction,
+    ) => {
+      try {
+        const game = await PuzzleService.getPuzzleForEdit(
+          request.params.game_id,
+          request.user!.user_id,
+          request.user!.role,
+        );
+        const result = new SuccessResponse(
+          StatusCodes.OK,
+          'Puzzle retrieved for edit',
+          game,
+        );
 
-export const createPuzzle = async (req: AuthedRequest, res: Response, next: NextFunction) => {
-  const userId = req.user!.user_id;
-  try {
-    const result = await PuzzleService.createPuzzle(req.user!.user_id, req.body);
-    res.status(201).json({ success: true, data: result });
-  } catch (error) {
-    next(error); 
-  }
-};
+        return response.status(result.statusCode).json(result.json());
+      } catch (error) {
+        next(error);
+      }
+    },
+  )
+  // Start puzzle session
+  .post(
+    '/:game_id/start',
+    validateAuth({ optional: true }),
+    async (
+      request: AuthedRequest<
+        { game_id: string },
+        {},
+        { difficulty?: 'easy' | 'medium' | 'hard' }
+      >,
+      response: Response,
+      next: NextFunction,
+    ) => {
+      try {
+        const userId = request.user?.user_id ?? 'anonymous';
+        const result = await PuzzleService.startPuzzle(userId, {
+          gameId: request.params.game_id,
+          difficulty: request.body.difficulty,
+        });
+        const successResponse = new SuccessResponse(
+          StatusCodes.CREATED,
+          'Puzzle session started',
+          result,
+        );
 
-export const updatePuzzle = async (req: AuthedRequest, res: Response, next: NextFunction) => {
-  try {
-    const userId = req.user!.user_id;
-    const userRole = req.user!.role;
-    const { id } = req.params;
+        return response
+          .status(successResponse.statusCode)
+          .json(successResponse.json());
+      } catch (error) {
+        next(error);
+      }
+    },
+  )
+  // Finish puzzle session
+  .post(
+    '/finish',
+    validateAuth({ optional: true }),
+    validateBody({ schema: FinishPuzzleSchema }),
+    async (
+      request: AuthedRequest<{}, {}, IFinishPuzzle>,
+      response: Response,
+      next: NextFunction,
+    ) => {
+      try {
+        const userId = request.user?.user_id ?? 'anonymous';
+        const result = await PuzzleService.finishPuzzle(userId, request.body);
+        const successResponse = new SuccessResponse(
+          StatusCodes.OK,
+          'Puzzle completed successfully',
+          result,
+        );
 
-    const result = await PuzzleService.updatePuzzle(id, req.body, userId, userRole);
-    res.json({ success: true, data: result });
-  } catch (error) {
-    next(error);
-  }
-};
+        return response
+          .status(successResponse.statusCode)
+          .json(successResponse.json());
+      } catch (error) {
+        next(error);
+      }
+    },
+  )
+  // Upload puzzle image
+  .post(
+    '/upload-image',
+    validateAuth({ optional: true }),
+    upload.single('image'),
+    async (request: AuthedRequest, response: Response, next: NextFunction) => {
+      try {
+        const userId = request.user?.user_id ?? 'anonymous';
+        const file = request.file;
 
-export const deletePuzzle = async (req: AuthedRequest, res: Response, next: NextFunction) => {
-  try {
-    const userId = req.user!.user_id;
-    const userRole = req.user!.role;
-    const { id } = req.params;
+        if (!file) {
+          const result = new SuccessResponse(
+            StatusCodes.BAD_REQUEST,
+            'No file provided',
+          );
 
-    await PuzzleService.deletePuzzle(id, userId, userRole);
-    res.json({ success: true, message: "Puzzle berhasil dihapus" });
-  } catch (error) {
-    next(error);
-  }
-};
+          return response.status(result.statusCode).json(result.json());
+        }
+
+        const result = await PuzzleService.uploadPuzzleImage(
+          userId,
+          new File([new Uint8Array(file.buffer)], file.originalname, {
+            type: file.mimetype,
+          }),
+        );
+        const successResponse = new SuccessResponse(
+          StatusCodes.CREATED,
+          'Image uploaded successfully',
+          result,
+        );
+
+        return response
+          .status(successResponse.statusCode)
+          .json(successResponse.json());
+      } catch (error) {
+        next(error);
+      }
+    },
+  )
+  // Create new puzzle (admin only)
+  .post(
+    '/',
+    validateAuth({ allowed_roles: ['ADMIN', 'SUPER_ADMIN'] }),
+    validateBody({
+      schema: CreatePuzzleSchema,
+      file_fields: [
+        { name: 'thumbnail_image', maxCount: 1 },
+        { name: 'files_to_upload', maxCount: 1 },
+      ],
+    }),
+    async (
+      request: AuthedRequest<{}, {}, ICreatePuzzle>,
+      response: Response,
+      next: NextFunction,
+    ) => {
+      try {
+        const newPuzzle = await PuzzleService.createPuzzle(
+          request.user!.user_id,
+          request.body,
+        );
+        const result = new SuccessResponse(
+          StatusCodes.CREATED,
+          'Puzzle created',
+          newPuzzle,
+        );
+
+        return response.status(result.statusCode).json(result.json());
+      } catch (error) {
+        next(error);
+      }
+    },
+  )
+  // Update puzzle (admin only)
+  .patch(
+    '/:game_id',
+    validateAuth({ allowed_roles: ['ADMIN', 'SUPER_ADMIN'] }),
+    validateBody({
+      schema: UpdatePuzzleSchema,
+      file_fields: [
+        { name: 'thumbnail_image', maxCount: 1 },
+        { name: 'files_to_upload', maxCount: 1 },
+      ],
+    }),
+    async (
+      request: AuthedRequest<{ game_id: string }, {}, IUpdatePuzzle>,
+      response: Response,
+      next: NextFunction,
+    ) => {
+      try {
+        const updatedPuzzle = await PuzzleService.updatePuzzle(
+          request.params.game_id,
+          request.body,
+          request.user!.user_id,
+          request.user!.role,
+        );
+        const result = new SuccessResponse(
+          StatusCodes.OK,
+          'Puzzle updated',
+          updatedPuzzle,
+        );
+
+        return response.status(result.statusCode).json(result.json());
+      } catch (error) {
+        next(error);
+      }
+    },
+  )
+  // Delete puzzle (admin only)
+  .delete(
+    '/:game_id',
+    validateAuth({ allowed_roles: ['ADMIN', 'SUPER_ADMIN'] }),
+    async (
+      request: AuthedRequest<{ game_id: string }>,
+      response: Response,
+      next: NextFunction,
+    ) => {
+      try {
+        const result = await PuzzleService.deletePuzzle(
+          request.params.game_id,
+          request.user!.user_id,
+          request.user!.role,
+        );
+        const successResponse = new SuccessResponse(
+          StatusCodes.OK,
+          'Puzzle deleted successfully',
+          result,
+        );
+
+        return response
+          .status(successResponse.statusCode)
+          .json(successResponse.json());
+      } catch (error) {
+        next(error);
+      }
+    },
+  );

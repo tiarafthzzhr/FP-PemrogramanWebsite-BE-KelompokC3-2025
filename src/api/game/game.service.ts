@@ -37,7 +37,9 @@ export abstract class GameService {
               ? { contains: query.search, mode: 'insensitive' }
               : undefined,
           },
-          { game_template: { slug: query.gameTypeSlug } },
+          query.gameTypeSlug
+            ? { game_template: { slug: query.gameTypeSlug } }
+            : {},
           { creator: { id: user_id } },
         ],
       },

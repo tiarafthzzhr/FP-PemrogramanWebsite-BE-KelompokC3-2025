@@ -1,0 +1,2 @@
+id,game_template_id,creator_id,name,description,thumbnail_image,puzzle_image,is_publish_immediately,rows,cols,difficulty
+a1b2c3d4-1234-5678-9abc-def012345678,06415ea7-d932-4b10-a285-f53201edf108,8b62b33f-4575-42d3-85ce-27c34122143a,Puzzle Game,Susun potongan gambar menjadi satu kesatuan. Pilih tingkat kesulitanmu!,puzzle-cat-medium.png,puzzle-cat-medium.png,true,4,4,medium

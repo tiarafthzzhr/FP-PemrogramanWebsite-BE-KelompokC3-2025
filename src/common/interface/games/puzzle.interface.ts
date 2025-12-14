@@ -1,21 +1,22 @@
-export interface PuzzleGameJson {
+export interface IPuzzleJson {
   title: string;
   description?: string;
   imageUrl: string;
   thumbnail?: string;
-  rows: number;       
-  cols: number;       
-  difficulty: "easy" | "medium" | "hard"; 
+  rows: number;
+  cols: number;
+  difficulty: 'easy' | 'medium' | 'hard';
   timeLimitSec: number;
 }
 
-export interface PuzzleStartResponse {
+export interface IPuzzleStartResponse {
   sessionId: string;
   gameId: string;
-  gameJson: PuzzleGameJson;
+  gameName: string;
+  gameJson: IPuzzleJson;
 }
 
-export interface PuzzleSessionData {
+export interface IPuzzleSessionData {
   id: string;
   userId: string;
   puzzleId: string;
@@ -25,7 +26,7 @@ export interface PuzzleSessionData {
   moveCount: number;
 }
 
-export interface PuzzleFinishResponse {
+export interface IPuzzleFinishResponse {
   message: string;
   sessionId: string;
   startedAt: Date;
