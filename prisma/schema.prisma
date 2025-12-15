@@ -83,32 +83,3 @@ model LikedGames {
   @@unique([user_id, game_id])
 }
 
-model Puzzle {
-  id          String   @id @default(uuid())
-  title       String
-  description String?
-  imageUrl    String        
-  thumbnail   String?       
-  rows        Int          
-  cols        Int           
-  difficulty  String        
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  sessions    PuzzleSession[]
-}
-
-model PuzzleSession {
-  id          String    @id @default(uuid())
-  userId      String
-  puzzleId    String
-  durationSec Int?
-  moveCount   Int       @default(0)
-  startedAt   DateTime  @default(now())
-  finishedAt  DateTime?
-
-  puzzle      Puzzle    @relation(fields: [puzzleId], references: [id])
-  
-  @@unique([userId, puzzleId, finishedAt]) 
-}
-
