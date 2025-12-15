@@ -15,6 +15,42 @@ export abstract class QuizService {
   // eslint-disable-next-line @typescript-eslint/naming-convention
   private static QUIZ_SLUG = 'quiz';
 
+  static async getQuizList(includeDrafts = false) {
+    const whereClause: Prisma.GamesWhereInput = {
+      game_template: { slug: this.QUIZ_SLUG },
+    };
+
+    if (!includeDrafts) {
+      whereClause.is_published = true;
+    }
+
+    const quizzes = await prisma.games.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        thumbnail_image: true,
+        game_json: true,
+        total_played: true,
+        created_at: true,
+        is_published: true,
+      },
+      orderBy: { created_at: 'desc' },
+    });
+
+    return quizzes.map(quiz => {
+      const gameJson = quiz.game_json as unknown as {
+        questions?: unknown[];
+      } | null;
+
+      return {
+        ...quiz,
+        question_count: gameJson?.questions?.length ?? 0,
+      };
+    });
+  }
+
   static async createQuiz(data: ICreateQuiz, user_id: string) {
     await this.existGameCheck(data.name);
 

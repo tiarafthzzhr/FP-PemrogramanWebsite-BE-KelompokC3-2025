@@ -24,6 +24,29 @@ import {
 } from './schema';
 
 export const QuizController = Router()
+  // Get all quizzes (public)
+  .get(
+    '/',
+    validateAuth({ optional: true }),
+    async (request: AuthedRequest, response: Response, next: NextFunction) => {
+      try {
+        const isEditor =
+          request.user?.role === 'ADMIN' ||
+          request.user?.role === 'SUPER_ADMIN';
+        const data = await QuizService.getQuizList(isEditor);
+        const result = new SuccessResponse(
+          StatusCodes.OK,
+          'Quiz list retrieved',
+          data,
+        );
+
+        return response.status(result.statusCode).json(result.json());
+      } catch (error) {
+        next(error);
+      }
+    },
+  )
+  // Create new quiz
   .post(
     '/',
     validateAuth({}),

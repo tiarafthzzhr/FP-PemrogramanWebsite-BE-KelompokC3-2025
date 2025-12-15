@@ -20,16 +20,14 @@ import {
   FinishPuzzleSchema,
   type ICreatePuzzle,
   type IFinishPuzzle,
-  type IStartPuzzle,
   type IUpdatePuzzle,
-  StartPuzzleSchema,
   UpdatePuzzleSchema,
 } from './schema';
 
 const upload = multer({ storage: multer.memoryStorage() });
 
 export const PuzzleController = Router()
-  // Get all puzzles (public)
+  // Get all puzzles (public) - supports ?difficulty=easy|medium|hard filter
   .get(
     '/',
     validateAuth({ optional: true }),
@@ -38,7 +36,18 @@ export const PuzzleController = Router()
         const isEditor =
           request.user?.role === 'ADMIN' ||
           request.user?.role === 'SUPER_ADMIN';
-        const data = await PuzzleService.getPuzzleList(isEditor);
+
+        // Get difficulty from query parameter
+        const difficultyParameter = request.query.difficulty as
+          | string
+          | undefined;
+        const difficulty = ['easy', 'medium', 'hard'].includes(
+          difficultyParameter ?? '',
+        )
+          ? (difficultyParameter as 'easy' | 'medium' | 'hard')
+          : undefined;
+
+        const data = await PuzzleService.getPuzzleList(isEditor, difficulty);
         const result = new SuccessResponse(
           StatusCodes.OK,
           'Puzzle list retrieved',
@@ -234,10 +243,10 @@ export const PuzzleController = Router()
       }
     },
   )
-  // Create new puzzle (admin only)
+  // Create new puzzle (all logged-in users)
   .post(
     '/',
-    validateAuth({ allowed_roles: ['ADMIN', 'SUPER_ADMIN'] }),
+    validateAuth({}),
     validateBody({
       schema: CreatePuzzleSchema,
       file_fields: [
@@ -267,10 +276,10 @@ export const PuzzleController = Router()
       }
     },
   )
-  // Update puzzle (admin only)
+  // Update puzzle (owner or super admin - checked in service)
   .patch(
     '/:game_id',
-    validateAuth({ allowed_roles: ['ADMIN', 'SUPER_ADMIN'] }),
+    validateAuth({}),
     validateBody({
       schema: UpdatePuzzleSchema,
       file_fields: [
@@ -302,10 +311,10 @@ export const PuzzleController = Router()
       }
     },
   )
-  // Delete puzzle (admin only)
+  // Delete puzzle (owner or super admin - checked in service)
   .delete(
     '/:game_id',
-    validateAuth({ allowed_roles: ['ADMIN', 'SUPER_ADMIN'] }),
+    validateAuth({}),
     async (
       request: AuthedRequest<{ game_id: string }>,
       response: Response,

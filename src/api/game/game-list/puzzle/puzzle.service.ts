@@ -16,7 +16,10 @@ export abstract class PuzzleService {
   // eslint-disable-next-line @typescript-eslint/naming-convention
   private static PUZZLE_SLUG = 'puzzle';
 
-  static async getPuzzleList(includeDrafts = false) {
+  static async getPuzzleList(
+    includeDrafts = false,
+    difficulty?: 'easy' | 'medium' | 'hard',
+  ) {
     const whereClause: Prisma.GamesWhereInput = {
       game_template: { slug: this.PUZZLE_SLUG },
     };
@@ -40,8 +43,13 @@ export abstract class PuzzleService {
       orderBy: { created_at: 'desc' },
     });
 
-    return puzzles.map(puzzle => {
-      const gameJson = puzzle.game_json as any;
+    // Map and filter by difficulty if provided
+    const mappedPuzzles = puzzles.map(puzzle => {
+      const gameJson = puzzle.game_json as {
+        difficulty?: string;
+        rows?: number;
+        cols?: number;
+      } | null;
 
       return {
         ...puzzle,
@@ -50,6 +58,13 @@ export abstract class PuzzleService {
         cols: gameJson?.cols,
       };
     });
+
+    // Filter by difficulty if specified
+    if (difficulty) {
+      return mappedPuzzles.filter(puzzle => puzzle.difficulty === difficulty);
+    }
+
+    return mappedPuzzles;
   }
 
   static async getPuzzleById(gameId: string) {
@@ -176,12 +191,11 @@ export abstract class PuzzleService {
     return newGame;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   static async updatePuzzle(
     gameId: string,
     data: IUpdatePuzzle,
-    _userId: string,
-    _userRole: ROLE,
+    userId: string,
+    userRole: ROLE,
   ) {
     const game = await prisma.games.findUnique({
       where: { id: gameId },
@@ -203,8 +217,13 @@ export abstract class PuzzleService {
       throw new ErrorResponse(StatusCodes.NOT_FOUND, 'Puzzle not found');
     }
 
-    // All ADMIN and SUPER_ADMIN can edit any puzzle
-    // (Authorization already handled by controller middleware)
+    // Only owner or SUPER_ADMIN can edit
+    if (userRole !== 'SUPER_ADMIN' && game.creator_id !== userId) {
+      throw new ErrorResponse(
+        StatusCodes.FORBIDDEN,
+        'User cannot edit this puzzle',
+      );
+    }
 
     if (data.name) {
       const isNameExist = await prisma.games.findUnique({
@@ -308,8 +327,7 @@ export abstract class PuzzleService {
     return updatedGame;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  static async deletePuzzle(gameId: string, _userId: string, _userRole: ROLE) {
+  static async deletePuzzle(gameId: string, userId: string, userRole: ROLE) {
     const game = await prisma.games.findUnique({
       where: { id: gameId },
       select: {
@@ -324,8 +342,13 @@ export abstract class PuzzleService {
       throw new ErrorResponse(StatusCodes.NOT_FOUND, 'Puzzle not found');
     }
 
-    // All ADMIN and SUPER_ADMIN can delete any puzzle
-    // (Authorization already handled by controller middleware)
+    // Only owner or SUPER_ADMIN can delete
+    if (userRole !== 'SUPER_ADMIN' && game.creator_id !== userId) {
+      throw new ErrorResponse(
+        StatusCodes.FORBIDDEN,
+        'User cannot delete this puzzle',
+      );
+    }
 
     const oldPuzzleJson = game.game_json as IPuzzleJson | null;
     const oldImagePaths: string[] = [];

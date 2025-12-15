@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import {
   type NextFunction,
   type Request,
@@ -45,12 +46,25 @@ export const validateBody = <T>({
       const filesData =
         file_fields.length > 0
           ? Object.fromEntries(
-              Object.entries(request.files || {}).map(([key, value]) => [
-                key,
-                Array.isArray(value) && value.length > 1
-                  ? value.map(item => multerToFile(item))
-                  : multerToFile(value[0]),
-              ]),
+              Object.entries(request.files || {}).map(([key, value]) => {
+                const fieldConfig = file_fields.find(f => f.name === key);
+                const shouldBeArray =
+                  fieldConfig &&
+                  fieldConfig.maxCount &&
+                  fieldConfig.maxCount > 1;
+
+                if (Array.isArray(value)) {
+                  // If field expects array (maxCount > 1), always return array
+                  if (shouldBeArray) {
+                    return [key, value.map(item => multerToFile(item))];
+                  }
+
+                  // If field expects single file (maxCount = 1), return single file
+                  return [key, multerToFile(value[0])];
+                }
+
+                return [key, multerToFile(value)];
+              }),
             )
           : {};
 
