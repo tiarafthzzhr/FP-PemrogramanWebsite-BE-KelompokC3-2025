@@ -9,7 +9,7 @@ Mengimplementasikan modul game **Puzzle** secara lengkap yang mencakup:
 
 ## Assignee
 
-- Tiara Fatwaa Aulia - 5027241090
+- Tiara Fatimah Azzahra - 5027241090
 - Naila Cahyarani Idelia - 5027241063
 - Aslam Ahmad Usman - 5027241074
 
